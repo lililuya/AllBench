@@ -28,6 +28,14 @@ AllBench 依据公开数学定义整理独立接口，未整体复制作者仓�
 
 ## 结论适用范围
 
-通用数据 benchmark 实际应衡量“固定训练条件下，数据版本改变后各能力的变化”。本次工具只实现其中离线评测层；固定训练执行、数据预算配平和多训练种子不在当前运行时。CLIP/DINO 是代理特征，风格保留与身份保真也不是同一个目标。建议保留人工盲评、任务属性/关系金标、错误标签与不确定项，逐领域校准；无通用成功阈值。
+通用数据 benchmark 实际应衡量“固定训练条件下，数据版本改变后各能力的变化”。本次工具实现底模生成接入及离线评测层；固定训练执行、数据预算配平和多训练种子不在当前运行时。CLIP/DINO 是代理特征，风格保留与身份保真也不是同一个目标。建议保留人工盲评、任务属性/关系金标、错误标签与不确定项，逐领域校准；无通用成功阈值。
 
 当前 DataPipeline 已有分层人工抽样及加权区间，但 M4 模型归因/补数任务未实现，不迁出其已验证审计代码，不勾选原 10.1–10.3。AllBench 接收 release ID 和外部结果；数据库结果导入及自动补数仍需后续接口实现。
+
+## FLUX.2-klein-9B 生成器（2026-10-27）
+
+用户指定该模型作为真实生成器。核对 [BFL 官方模型卡](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B)：该版本为4步蒸馏模型，官方 Diffusers 示例使用 `guidance_scale=1.0`、CPU offload；[klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) 为非蒸馏版本，必须独立记账，不能混称。
+
+官方配置及 LFS 元数据固定 HF revision `92196c8e11f7b6cf2b7493e037d8c5345c559216`。本地 transformer 单文件 raw SHA-256 与官方值一致：`0975d6b77b5f510b99547d6724a208e36527df654e8f6134f59ece3f9f30da58`；AllBench 文件身份摘要为 `afb9ed82ce8848d6b2e7d2634fcf9a493f49bacdf5be1f0082c06accb7047e01`。官方 transformer 配置为8个双流层、24个单流层、32头、head_dim128、joint_attention_dim12288，`guidance_embeds=false`。
+
+本次优先使用 node94 已有支持 Klein 的只读独立环境 Diffusers0.40.0，按本地单文件及明确组件路径组装；不替换其他服务环境，不使用第三方合并模型。只提供 base_only 文生图，用户 LoRA 与概念参考仍待就绪；真实执行结果单独记录，不以模型卡的速度或质量声明代替本机实测。

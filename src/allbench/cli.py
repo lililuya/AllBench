@@ -30,6 +30,11 @@ def main():
     p.add_argument("--clip")
     p.add_argument("--vgg")
     p.add_argument("--device", default="cpu")
+    p = sub.add_parser("generate", help="使用本地 FLUX.2-klein-9B 生成 base_only 矩阵")
+    p.add_argument("manifest")
+    p.add_argument("--model-config", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--interrupt-after", type=int, help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -43,6 +48,9 @@ def main():
             result = {"jobs": len(result["jobs"]), "out": args.out}
         elif args.command == "evaluate":
             result = evaluate(args.manifest, args.features, args.out, args.interrupt_after_checkpoint)
+        elif args.command == "generate":
+            from .generate import generate
+            result = generate(args.manifest, args.model_config, args.out, args.interrupt_after)
         else:
             from .encode import encode
             result = encode(args.manifest, args.out, args.dino, args.clip, args.vgg, args.device)

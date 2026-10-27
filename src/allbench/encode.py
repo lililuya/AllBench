@@ -10,7 +10,7 @@ from .protocol import validate
 def weights_digest(path):
     path = Path(path).resolve()
     files = [path] if path.is_file() else sorted(p for p in path.rglob("*") if p.is_file()
-                                               and p.suffix in {".json", ".safetensors", ".bin", ".txt", ".model"})
+                                               and p.suffix in {".json", ".safetensors", ".bin", ".txt", ".model", ".jinja"})
     require(bool(files), "NO_LOCAL_MODEL_FILES")
     return digest([(p.name if path.is_file() else p.relative_to(path).as_posix(), file_hash(p)) for p in files])
 

@@ -80,6 +80,9 @@ def compute(spec, bundle, arrays):
     coverage = {c["id"]: {k: sum(p["concept_id"] == c["id"] and p["kind"] == k for p in spec["prompts"])
                            for k in sorted(KINDS)} for c in spec["concepts"]}
     return {"schema_version": "1.0", "benchmark_id": spec["benchmark_id"],
+            "evaluation_mode": spec.get("evaluation_mode", "paired"),
+            "input_origin": spec.get("input_origin", "unspecified"),
+            "generator_provenance": spec.get("generator_provenance"),
             "synthetic_images": spec["synthetic"],
             "synthetic_features": any(e["synthetic"] for e in bundle["encoders"].values()),
             "model_effect_validated": False,

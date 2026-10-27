@@ -30,15 +30,20 @@ def validate(path, require_outputs=True):
     require(nonempty(spec.get("benchmark_id")), "BENCHMARK_ID")
     require(type(spec.get("synthetic")) is bool, "SYNTHETIC_FLAG_REQUIRED")
     require(nonempty(spec.get("dataset_release")), "DATASET_RELEASE_REQUIRED")
-    require(set(spec.get("models", {})) == {"base", "adapted"}, "BASE_AND_ADAPTED_REQUIRED")
+    mode = spec.get("evaluation_mode", "paired")
+    require(mode in ("paired", "base_only"), "EVALUATION_MODE")
+    roles = {"base", "adapted"} if mode == "paired" else {"base"}
+    require(set(spec.get("models", {})) == roles, "BASE_AND_ADAPTED_REQUIRED")
     for model in spec["models"].values():
         require(all(nonempty(model.get(k)) for k in ("checkpoint", "revision")), "MODEL_IDENTITY_REQUIRED")
-    require(spec["models"]["base"]["checkpoint"] == spec["models"]["adapted"]["checkpoint"]
-            and spec["models"]["base"]["revision"] == spec["models"]["adapted"]["revision"],
-            "ADAPTED_BASE_MISMATCH")
-    adapter = spec["models"]["adapted"].get("adapter", {})
-    require(all(nonempty(adapter.get(k)) for k in ("checkpoint", "revision", "method")), "ADAPTER_IDENTITY_REQUIRED")
-    require(type(adapter.get("scale")) in (int, float) and math.isfinite(adapter["scale"]), "ADAPTER_SCALE_REQUIRED")
+    require("adapter" not in spec["models"]["base"], "BASE_MUST_NOT_HAVE_ADAPTER")
+    if mode == "paired":
+        require(spec["models"]["base"]["checkpoint"] == spec["models"]["adapted"]["checkpoint"]
+                and spec["models"]["base"]["revision"] == spec["models"]["adapted"]["revision"],
+                "ADAPTED_BASE_MISMATCH")
+        adapter = spec["models"]["adapted"].get("adapter", {})
+        require(all(nonempty(adapter.get(k)) for k in ("checkpoint", "revision", "method")), "ADAPTER_IDENTITY_REQUIRED")
+        require(type(adapter.get("scale")) in (int, float) and math.isfinite(adapter["scale"]), "ADAPTER_SCALE_REQUIRED")
     training = spec.get("training", {})
     for key in ("unique_samples", "sample_exposures", "steps", "seed"):
         require(key in training and (training[key] is None or
@@ -65,11 +70,12 @@ def validate(path, require_outputs=True):
         else:
             require(trigger in p["text"], "CONCEPT_PROMPT_MISSING_TRIGGER")
         require(trigger not in p["evaluation_text"], "EVALUATION_TEXT_REQUIRES_SEMANTIC_REPLACEMENT")
-    images = unique(spec.get("images"), "IMAGE")
+    images = ({} if mode == "base_only" and spec.get("images") == []
+              else unique(spec.get("images"), "IMAGE"))
     seen_cells, ref_splits, groups, refs, ref_members = set(), {}, {}, set(), set()
     for row in images.values():
         role = row.get("role")
-        require(role in ("reference", "base", "adapted"), "IMAGE_ROLE")
+        require(role in roles | {"reference"}, "IMAGE_ROLE")
         require(row.get("concept_id") in concepts, "IMAGE_CONCEPT")
         if role == "reference":
             require(row.get("split") in ("train", "holdout") and nonempty(row.get("group_id")), "REFERENCE_SPLIT_GROUP")
@@ -88,6 +94,17 @@ def validate(path, require_outputs=True):
         image_path = (path.parent / row["path"]).resolve()
         require(image_path.is_file(), "IMAGE_MISSING:" + row["id"])
         require(row.get("sha256") == file_hash(image_path), "IMAGE_CHECKSUM_MISMATCH:" + row["id"])
+        if "generation_receipt" in row:
+            receipt_path = (path.parent / row["generation_receipt"]).resolve()
+            require(file_hash(receipt_path) == row.get("receipt_sha256"), "GENERATION_RECEIPT_CHECKSUM_MISMATCH")
+            receipt = read_json(receipt_path)
+            require(role != "reference" and receipt["sha256"] == row["sha256"]
+                    and receipt["job"]["role"] == role and receipt["job"]["prompt_id"] == row["prompt_id"]
+                    and receipt["job"]["seed"] == row["seed"]
+                    and receipt["job"]["text"] == prompts[row["prompt_id"]]["text"], "GENERATION_RECEIPT_PAIR_MISMATCH")
+            provenance = spec.get("generator_provenance", {})
+            require(receipt["identity"] == provenance.get("identity")
+                    and receipt["components"] == provenance.get("components"), "GENERATION_PROVENANCE_MISMATCH")
         with Image.open(image_path) as im:
             im.verify()
         if role == "reference":
@@ -100,8 +117,9 @@ def validate(path, require_outputs=True):
         else:
             with Image.open(image_path) as im:
                 require(im.size == (g["width"], g["height"]), "OUTPUT_SIZE_MISMATCH")
-    require(refs == set(concepts), "REFERENCE_REQUIRED_FOR_EACH_CONCEPT")
-    expected = {(role, pid, seed) for role in ("base", "adapted") for pid in prompts for seed in seeds}
+    if mode == "paired":
+        require(refs == set(concepts), "REFERENCE_REQUIRED_FOR_EACH_CONCEPT")
+    expected = {(role, pid, seed) for role in roles for pid in prompts for seed in seeds}
     if require_outputs:
         require(seen_cells == expected, "INCOMPLETE_OUTPUT_MATRIX")
     return spec, digest(spec)
@@ -113,4 +131,4 @@ def plan(path):
             "generation": spec["generation"], "models": spec["models"],
             "jobs": [{"role": role, "concept_id": p["concept_id"], "prompt_id": p["id"],
                       "text": p["text"], "seed": seed}
-                     for role in ("base", "adapted") for p in spec["prompts"] for seed in spec["seeds"]]}
+                     for role in spec["models"] for p in spec["prompts"] for seed in spec["seeds"]]}
