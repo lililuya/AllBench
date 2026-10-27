@@ -1,0 +1,14 @@
+{
+  "manifest": "klein-case.json",
+  "model_config": "klein-model.json",
+  "generator_python": "/envs/generator/bin/python",
+  "encoder_python": "/envs/encoder/bin/python",
+  "encoders": {
+    "dino": "/models/dinov2-large",
+    "clip": "/models/CLIP-ViT-L-14-DataComp.XL-s13B-b90K",
+    "vgg": "/models/vgg19-dcbb9e9d.pth",
+    "device": "cuda:0"
+  },
+  "cuda_visible_devices": "1",
+  "require_all_metrics": true
+}

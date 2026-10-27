@@ -1,0 +1,10 @@
+# Windows Python 3.12 local validation environment, 2026-10-27.
+# GPU encoding uses separately recorded node94 runtime, not this lock.
+numpy==2.5.4
+pillow==12.3.0
+pytest==9.1.1
+colorama==0.4.6
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+Pygments==2.21.0

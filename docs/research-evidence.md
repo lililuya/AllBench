@@ -1,0 +1,45 @@
+# 研究证据与实施边界
+
+核查日期：2026-10-27。按 ICLR 2024 完整研究论文阅读，重点是工程复现条件，不做投稿评价。
+
+## 来源
+
+- 论文：[Navigating Text-To-Image Customization](https://arxiv.org/html/2309.14859v2)，重点 §4、§5.2、附录 D.4–D.6、E 与 G；[OpenReview](https://openreview.net/forum?id=wfzXa8e783) 本次有浏览器验证，使用 arXiv v2。
+- 算法库：[KohakuBlueleaf/LyCORIS](https://github.com/KohakuBlueleaf/LyCORIS)，核查 dev tree `b5d65a3a5b9866979292bd15f1a5e3c1e770181a`。它主要提供微调算法；当前 kernel benchmark 不能当作模型效果评测。
+- 作者评测：[cyber-meow/LyCORIS-evaluation](https://github.com/cyber-meow/LyCORIS-evaluation/tree/7c5758c8338aa59c4601bb68db8d5112b15748c4)，MIT，Copyright 2023 CyberMeow。
+
+## 作者已有实施方案
+
+作者仓库公开了图像/文本编码、image similarity/SCD、text similarity、Vendi、style loss、Frechet distance、IQA 及生成脚本。主要源码为 `lycoris_eval/evaluation/eval_*.py`、`metrics/vendi.py`、`encoding/encoders.py`。因此评估并非只有论文描述；但其 setup.py 的 install_requires 为空，运行依赖需另建环境，文件组织和 WebUI 生成流程有实验约定，不能把 clone 成功当成可复现验收。
+
+## AllBench 的映射与差异
+
+| 能力 | 实施情况 | 尚需验证 |
+|---|---|---|
+| 图像相似度与 SCD | 独立数值实现；DINOv2 可选本地权重 | 目标领域与人工身份判断的相关性 |
+| CLIP 文图相似度 | HF CLIP 编码与显式语义替换，接入 DataComp ViT-L/14 固定权重 | 不声称与原作者软件/预处理的数字逐值等价；GPU 证据见完整链路记录 |
+| Vendi | 同 prompt 多 seed，附样本数 | 原作者 train/trigger 使用池化，本版统一逐提示，是工程选择 |
+| VGG19 style loss | 同提示同 seed 配对；五层卷积前激活 Gram | 真实编码器证据单列；人工风格校准待正式样本 |
+| 风格 LoRA 的参考风格相似度 | train/holdout 分别计算 VGG 跨集合 Gram 平均平方距离 | 与人工风格判断相关性待校准，不能以 DINO 替代 |
+| Concept leak / 泛化 | agnostic、alter、style 分层与 base 对照 | 自动泄漏判定、关系/属性金标和人工阈值 |
+| FD/FID、IQA、SHAP、跨类归一化 | 本版未移植 | 独立研究任务；不作为小样本核心门槛 |
+
+AllBench 依据公开数学定义整理独立接口，未整体复制作者仓库及其图片/权重。作者代码来源和 MIT 原文记录在 THIRD_PARTY_NOTICES.md；其他模型依赖仍遵循各自许可。
+
+## 结论适用范围
+
+通用数据 benchmark 实际应衡量“固定训练条件下，数据版本改变后各能力的变化”。本次工具实现底模生成接入及离线评测层；固定训练执行、数据预算配平和多训练种子不在当前运行时。CLIP/DINO 是代理特征，风格保留与身份保真也不是同一个目标。建议保留人工盲评、任务属性/关系金标、错误标签与不确定项，逐领域校准；无通用成功阈值。
+
+当前 DataPipeline 已有分层人工抽样及加权区间，但 M4 模型归因/补数任务未实现，不迁出其已验证审计代码，不勾选原 10.1–10.3。AllBench 接收 release ID 和外部结果；数据库结果导入及自动补数仍需后续接口实现。
+
+## FLUX.2-klein-9B 生成器（2026-10-27）
+
+用户指定该模型作为真实生成器。核对 [BFL 官方模型卡](https://huggingface.co/black-forest-labs/FLUX.2-klein-9B)：该版本为4步蒸馏模型，官方 Diffusers 示例使用 `guidance_scale=1.0`、CPU offload；[klein-base-9B](https://huggingface.co/black-forest-labs/FLUX.2-klein-base-9B) 为非蒸馏版本，必须独立记账，不能混称。
+
+官方配置及 LFS 元数据固定 HF revision `92196c8e11f7b6cf2b7493e037d8c5345c559216`。本地 transformer 单文件 raw SHA-256 与官方值一致：`0975d6b77b5f510b99547d6724a208e36527df654e8f6134f59ece3f9f30da58`；AllBench 文件身份摘要为 `afb9ed82ce8848d6b2e7d2634fcf9a493f49bacdf5be1f0082c06accb7047e01`。官方 transformer 配置为8个双流层、24个单流层、32头、head_dim128、joint_attention_dim12288，`guidance_embeds=false`。
+
+本次优先使用 node94 已有支持 Klein 的只读独立环境 Diffusers0.40.0，按本地单文件及明确组件路径组装；不替换其他服务环境，不使用第三方合并模型。首轮 base_only 证据见生成器记录；后续已实现 paired 标准 LoRA，真实执行结果分别记录，不以模型卡的速度或质量声明代替本机实测。
+
+CLIP 来源为 [LAION DataComp ViT-L/14](https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K)，固定修订 `84c9828e63dc9a9351d1fe637c346d4c1c4db341`，使用其 HF CLIPModel 与本地 processor；VGG19 使用 [torchvision 官方权重](https://docs.pytorch.org/vision/main/models/generated/torchvision.models.vgg19.html) `vgg19-dcbb9e9d.pth`。实际预处理和内容摘要随特征记录，不假称与作者旧软件完全等价。
+
+[BFL 官方模型注册代码](https://github.com/black-forest-labs/flux2/blob/main/src/flux2/util.py)对 klein-9B 和 klein-base-9B 使用同一 `Klein9BParams`，但默认采样分别为4步/CFG1和50步/CFG4，且蒸馏标志不同。本轮读取已有 base 权重，核对其201个张量的名称/形状与既有蒸馏结构完全一致，复用该结构配置并显式 `is_distilled=false`；base 配置的在线下载因访问限制失败，未重试绕过。4步/CFG4仅作为完整模块连接的短试点，不能将其质量与官方默认采样比较。
