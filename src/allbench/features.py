@@ -36,18 +36,22 @@ def load_bundle(path, spec, identity):
     for kind in ("images", "texts"):
         loaded[kind] = {}
         for sid, record in meta[kind].items():
-            file = (path.parent / record["path"]).resolve()
-            require(file_hash(file) == record["sha256"], "FEATURE_CHECKSUM_MISMATCH")
-            with np.load(file, allow_pickle=False) as arrays:
-                expected = set(encoders) if kind == "images" else {"clip"}
-                require(set(arrays.files) == expected, "FEATURE_ENCODERS_MISMATCH")
-                loaded[kind][sid] = {}
-                for key in arrays.files:
-                    a = np.asarray(arrays[key], dtype=np.float64)
-                    require(a.ndim == 1 and len(a) and np.isfinite(a).all(), "INVALID_FEATURE_VECTOR")
-                    require(key not in dims or dims[key] == len(a), "FEATURE_DIMENSION_MISMATCH")
-                    if key != "style":
-                        require(np.linalg.norm(a) > 0, "ZERO_FEATURE_VECTOR")
-                    dims[key] = len(a)
-                    loaded[kind][sid][key] = a
+            loaded[kind][sid] = load_record(path.parent, record, set(encoders) if kind == "images" else {"clip"}, dims)
     return meta, loaded
+
+
+def load_record(root, record, expected, dims):
+    file = (Path(root) / record["path"]).resolve()
+    require(file_hash(file) == record["sha256"], "FEATURE_CHECKSUM_MISMATCH")
+    loaded = {}
+    with np.load(file, allow_pickle=False) as arrays:
+        require(set(arrays.files) == expected, "FEATURE_ENCODERS_MISMATCH")
+        for key in arrays.files:
+            a = np.asarray(arrays[key], dtype=np.float64)
+            require(a.ndim == 1 and len(a) and np.isfinite(a).all(), "INVALID_FEATURE_VECTOR")
+            require(key not in dims or dims[key] == len(a), "FEATURE_DIMENSION_MISMATCH")
+            if key != "style":
+                require(np.linalg.norm(a) > 0, "ZERO_FEATURE_VECTOR")
+            dims[key] = len(a)
+            loaded[key] = a
+    return loaded

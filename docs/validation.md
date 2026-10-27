@@ -1,6 +1,6 @@
 # v0.1 验证记录
 
-本页保留首次离线骨架验证；后续真实生成器接入见 [FLUX.2-klein-9B](flux2-klein-generator.md)。
+本页保留首次离线骨架验证；首轮真实底模接入见 [FLUX.2-klein-9B](flux2-klein-generator.md)，当前真实 LoRA 与全部编码器/报告的验收见[完整链路](full-pipeline-validation.md)。
 
 日期：2026-10-27。这里只记录实际执行证据，不形成模型质量或吞吐结论。
 

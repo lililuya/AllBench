@@ -2,7 +2,15 @@
 
 独立的 LoRA 图像模型离线评测入口。参考 [LyCORIS 论文](https://arxiv.org/html/2309.14859v2)和[作者评测仓库](https://github.com/cyber-meow/LyCORIS-evaluation)，将固定协议、生成结果、图像/特征校验和分层指标报告放在一起。
 
-**当前为 v0.1 评测入口**：提供 manifest 校验、生成任务清单、离线特征导入、数值指标、可选本地预训练编码器与恢复机制；追加本地 FLUX.2-klein-9B 的底模生成器。真实 LoRA 生成对照和模型效果验收仍待接入。合成 Demo 的图片和向量均不代表模型效果。
+**当前支持完整执行链**：固定配置→FLUX.2-klein-9B 底模/标准 LoRA 配对生成→DINO、CLIP、VGG19 编码→指标→JSON/CSV/HTML 报告，生成/编码/评测均可恢复。统一入口及正式样本替换方式见[完整链路手册](docs/full-pipeline.md)。模块实测证据与概念效果验收分别记录；合成 Demo 不能代表模型效果。
+
+```bash
+python -m allbench.cli run /outside/repo/input/klein-run.json --out /outside/repo/runs/my-concept-v1
+```
+
+从 [examples/klein-run.json](examples/klein-run.json)、[样本配置](examples/klein-case.json)和[组件配置](examples/klein-model.json)复制模板到仓库外。正式 LoRA、触发词和参考集准备好后替换配置即可，不需要改评测代码。当前生成器支持匹配 Klein 底模的标准 LoRA，其他 LyCORIS 算法/架构需专用适配。
+
+2026-10-27：[node94 完整实测](docs/full-pipeline-validation.md)通过24张真实配对生成、26张图/6条文本的三个真实编码器、全部指标、三阶段中断恢复和全量零新增重放；56项回归通过。参考为生成夹具，正式概念效果待你的独立样本和人工金标验收。
 
 ## 快速运行
 
@@ -40,7 +48,7 @@ allbench evaluate /outside/repo/benchmark.json --features /outside/repo/features
 
 ## FLUX.2-klein-9B 真实生成
 
-`generate` 当前支持 `base_only` 文生图，供真实生成器和评测链路验收。采用本地官方蒸馏单文件 transformer、配套 Qwen3-8B/tokenizer/VAE 和显式 Diffusers 配置；不隐式下载权重。官方蒸馏版示例为4步、guidance 1.0，与非蒸馏 `klein-base-9B` 区分。运行时需已安装支持 Klein 的 Diffusers、Transformers、PyTorch、Accelerate 和 safetensors。
+`generate` 支持 `base_only` 和 `paired` 文生图。采用本地单文件 transformer、配套 Qwen3-8B/tokenizer/VAE 和显式 Diffusers 配置；不隐式下载权重。官方蒸馏版示例为4步、guidance 1.0，与非蒸馏 `klein-base-9B` 区分。LoRA 必须匹配实际训练底模；运行时需 PEFT，加载后逐张量验证挂载，base 禁用适配器、adapted 启用指定倍率。
 
 新环境可安装 `.[generate]`。当前生成器验证于 Transformers5.15.1，编码器验证于4.57.6；请使用独立环境分别运行，`encode` 与 `generate` 两个 extra 暂不合并安装。依赖安装不下载模型权重，GPU Torch 构建需匹配实际驱动。
 
@@ -64,13 +72,14 @@ tokenizer 需要完整官方文件及 `chat_template.jinja`；只有词表和 to
 | 文图对齐 | 对应提示与生成图的 CLIP 余弦 | 需要语义替换文本与相同 CLIP 空间 |
 | 多样性 | 每个独立 prompt 内多 seed 的线性核 Vendi，再宏平均 | 附 n，少于两个 seed 未测；和作者 train/trigger 池化口径有区别 |
 | 底模风格变化 | 同 prompt/seed 的 VGG19 五层归一化 Gram 平方差之和 | `style` 提示最适合检查风格保留；其他提示作为诊断 |
+| 参考风格相似度 | 生成图与 train/holdout 参考分别计算跨集合平均 Gram 平方距离 | 风格保真代理，越低越相似；不能代替人工风格判断 |
 
-输出 `report.json`，按概念、提示类别、base/adapted 分组；缺失指标是 `not_measured/null/reason`。没有总分或自动通过阈值。`prompt_coverage` 暴露缺失类型。`model_effect_validated` 始终为 false，表示本工具未替代人工效果验收。运行证据、来源和待补样本见 [研究与缺口](docs/research-evidence.md)、[样本组织清单](docs/sample-checklist.md)和[验证记录](docs/validation.md)。
+输出 `report.json`，按概念、提示类别、base/adapted 分组；`run` 还导出 CSV、HTML 图片对照和待审模板。缺失指标是 `not_measured/null/reason`。没有总分或自动通过阈值。`prompt_coverage` 暴露缺失类型。`model_effect_validated` 始终为 false，表示本工具未替代人工效果验收。运行证据、来源和待补样本见 [研究与缺口](docs/research-evidence.md)、[样本组织清单](docs/sample-checklist.md)和[验证记录](docs/validation.md)。
 
 ## 恢复与边界
 
 特征包以 ID 映射到 checksummed NPZ，`allow_pickle=False`；图片、协议、特征、软件版本参与结果身份。正常重放不重算指标。提交前中断可从校验过的 checkpoint 恢复；损坏结果或身份变化拒绝复用，改用新目录。
 
-`.lock` 用独占创建阻止并发写入。硬杀进程后锁可能残留：先核实对应进程已经退出，再手工移除该独立结果目录中的 `.lock`，重放原命令。不要删除其他任务的锁。编码在最终发布 feature manifest 后支持零编码重放；中途编码失败需要重新编码，当前不做逐图缓存恢复。
+`.lock` 用独占创建阻止并发写入。硬杀进程后锁可能残留：先核实对应进程已经退出，再手工移除该独立结果目录中的 `.lock`，重放原命令。不要删除其他任务的锁。编码按图片/文本原子提交，恢复只补缺项；完整重放零编码。`run` 保存各次尝试日志和失败阶段，改配置/输入使用新目录。
 
 Git 只放代码、文档和合成夹具的生成逻辑；真实图像、标注、模型、依赖、特征和结果在仓库外。DataPipeline 继续管理数据处理和发布；AllBench 用 `dataset_release` 回链，本版未接业务数据库或自动补数工单。

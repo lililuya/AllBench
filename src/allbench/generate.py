@@ -18,6 +18,43 @@ def component_identity(config):
     return {k: weights_digest(config[k]) for k in keys}
 
 
+def load_adapter(pipe, adapter):
+    """Use upstream conversion, then verify every converted A/B tensor was mounted."""
+    import torch
+    from safetensors import safe_open
+
+    require(adapter["method"].lower() == "lora", "KLEIN_ONLY_STANDARD_LORA_SUPPORTED")
+    with safe_open(adapter["checkpoint"], framework="pt", device="cpu") as f:
+        keys = list(f.keys())
+    require(keys and all(k.endswith((".lora_down.weight", ".lora_up.weight", ".alpha",
+                                      ".lora_A.weight", ".lora_B.weight")) for k in keys),
+            "UNSUPPORTED_LORA_KEYS")
+    state = pipe.lora_state_dict(adapter["checkpoint"], local_files_only=True, use_safetensors=True)
+    require(state and all(k.startswith("transformer.") and k.endswith((".lora_A.weight", ".lora_B.weight"))
+                          for k in state), "UNSUPPORTED_CONVERTED_LORA_KEYS")
+    modules = {}
+    for key, value in state.items():
+        target, side = key.removeprefix("transformer.").rsplit(".lora_", 1)
+        require(torch.isfinite(value).all().item(), "NONFINITE_LORA_WEIGHT")
+        module = pipe.transformer.get_submodule(target)
+        require(value.ndim == 2 and hasattr(module, "weight"), "LORA_TARGET_SHAPE")
+        modules.setdefault(target, {})[side] = value
+    for target, sides in modules.items():
+        require(set(sides) == {"A.weight", "B.weight"}, "INCOMPLETE_LORA_PAIR")
+        a, b = sides["A.weight"], sides["B.weight"]
+        weight = pipe.transformer.get_submodule(target).weight
+        require(a.shape[0] == b.shape[1] and (b.shape[0], a.shape[1]) == tuple(weight.shape), "LORA_TARGET_SHAPE")
+    pipe.load_lora_weights(state, adapter_name="benchmark")
+    for target, sides in modules.items():
+        module = pipe.transformer.get_submodule(target)
+        for side, expected in sides.items():
+            actual = getattr(module, "lora_" + side[0])["benchmark"].weight.detach().cpu()
+            require(torch.equal(actual, expected.to(dtype=actual.dtype, device="cpu")), "LORA_MOUNTED_WEIGHT_MISMATCH")
+    pipe.disable_lora()
+    return {"source_tensors": len(keys), "mounted_tensors": len(state), "target_modules": len(modules),
+            "conversion": "diffusers.Flux2LoraLoaderMixin.lora_state_dict", "weights_verified": True}
+
+
 class KleinBackend:
     def __init__(self, config):
         import diffusers
@@ -29,6 +66,7 @@ class KleinBackend:
 
         self.torch = torch
         self.device = config["device"]
+        self.adapter = config.get("adapter")
         self.runtime = {"diffusers": diffusers.__version__, "transformers": transformers.__version__,
                         "torch": torch.__version__, "gpu": torch.cuda.get_device_name(self.device),
                         "device": self.device, "precision": "bfloat16", "cpu_offload": config["cpu_offload"]}
@@ -41,6 +79,11 @@ class KleinBackend:
         scheduler = FlowMatchEulerDiscreteScheduler.from_config(read_json(config["scheduler_config"]))
         self.pipe = Flux2KleinPipeline(transformer=transformer, vae=vae, text_encoder=text_encoder,
                                        tokenizer=tokenizer, scheduler=scheduler, is_distilled=config["is_distilled"])
+        require(bool(tokenizer.chat_template), "KLEIN_TOKENIZER_CHAT_TEMPLATE_REQUIRED")
+        if self.adapter:
+            import importlib.metadata
+            self.runtime["peft"] = importlib.metadata.version("peft")
+            self.runtime["adapter_load"] = load_adapter(self.pipe, self.adapter)
         if config["cpu_offload"]:
             self.pipe.enable_model_cpu_offload(device=self.device)
         else:
@@ -48,18 +91,25 @@ class KleinBackend:
         self.pipe.set_progress_bar_config(disable=True)
 
     def generate(self, job, generation):
+        if self.adapter:
+            if job["role"] == "base":
+                self.pipe.disable_lora()
+            else:
+                self.pipe.enable_lora()
+                self.pipe.set_adapters("benchmark", adapter_weights=self.adapter["scale"])
         self.torch.cuda.reset_peak_memory_stats(self.device)
         image = self.pipe(prompt=job["text"], height=generation["height"], width=generation["width"],
                           num_inference_steps=generation["steps"], guidance_scale=generation["cfg"],
                           max_sequence_length=generation["max_sequence_length"],
                           generator=self.torch.Generator(device="cpu").manual_seed(job["seed"])).images[0]
         self.torch.cuda.synchronize(self.device)
-        return image, {"peak_allocated_bytes": self.torch.cuda.max_memory_allocated(self.device)}
+        return image, {"peak_allocated_bytes": self.torch.cuda.max_memory_allocated(self.device),
+                       "adapter_enabled": bool(self.adapter and job["role"] == "adapted"),
+                       "adapter_scale": self.adapter["scale"] if self.adapter and job["role"] == "adapted" else 0.0}
 
 
 def generate(manifest, model_config, out, interrupt_after=None, backend_factory=None):
     spec, _ = validate(manifest, require_outputs=False)
-    require(spec.get("evaluation_mode") == "base_only", "KLEIN_GENERATOR_BASE_ONLY_CURRENTLY_SUPPORTED")
     require(all(r["role"] == "reference" for r in spec["images"]), "GENERATOR_REQUIRES_INPUT_WITHOUT_OUTPUTS")
     g = spec["generation"]
     require(g["engine"] == "diffusers.Flux2KleinPipeline" and g["precision"] == "bfloat16", "KLEIN_ENGINE_PRECISION")
@@ -68,12 +118,22 @@ def generate(manifest, model_config, out, interrupt_after=None, backend_factory=
     require(type(g.get("max_sequence_length")) is int and 1 <= g["max_sequence_length"] <= 512, "KLEIN_MAX_SEQUENCE")
     config = read_json(model_config)
     components = component_identity(config)
+    backend_config = dict(config)
+    if spec.get("evaluation_mode", "paired") == "paired":
+        adapter = dict(spec["models"]["adapted"]["adapter"])
+        adapter["checkpoint"] = str((Path(manifest).resolve().parent / adapter["checkpoint"]).resolve())
+        require(adapter["method"].lower() == "lora", "KLEIN_ONLY_STANDARD_LORA_SUPPORTED")
+        require(Path(adapter["checkpoint"]).suffix == ".safetensors", "LORA_SAFETENSORS_REQUIRED")
+        components["adapter"] = weights_digest(adapter["checkpoint"])
+        require(components["adapter"] == adapter["revision"], "GENERATOR_ADAPTER_IDENTITY_MISMATCH")
+        backend_config["adapter"] = adapter
     require(spec["models"]["base"]["revision"] == components["transformer"], "GENERATOR_MODEL_IDENTITY_MISMATCH")
     require(g.get("generator_device") == "cpu", "GENERATOR_RNG_DEVICE_MUST_BE_CPU")
     require(g.get("is_distilled") == config["is_distilled"], "GENERATOR_DISTILLATION_MISMATCH")
     require(not config["is_distilled"] or g["cfg"] == 1.0, "DISTILLED_KLEIN_GUIDANCE_MUST_BE_ONE")
     import importlib.metadata
-    runtime_identity = {name: importlib.metadata.version(name) for name in ("torch", "diffusers", "transformers")}
+    packages = ("torch", "diffusers", "transformers", "peft") if "adapter" in components else ("torch", "diffusers", "transformers")
+    runtime_identity = {name: importlib.metadata.version(name) for name in packages}
     require(g["engine_revision"] == runtime_identity["diffusers"], "GENERATOR_ENGINE_VERSION_MISMATCH")
     implementation = digest([(p.name, file_hash(p)) for p in sorted(Path(__file__).parent.glob("*.py"))])
     identity = digest({"spec": spec, "components": components, "config": config,
@@ -109,7 +169,7 @@ def generate(manifest, model_config, out, interrupt_after=None, backend_factory=
         for job, key, receipt_path, image_path in pending:
             if backend is None:
                 start = time.perf_counter()
-                backend = (backend_factory or KleinBackend)(config)
+                backend = (backend_factory or KleinBackend)(backend_config)
                 load_seconds = time.perf_counter() - start
                 require(backend.runtime["diffusers"] == g["engine_revision"], "BACKEND_VERSION_MISMATCH")
                 require(all(r["runtime"] == backend.runtime for r in completed), "GENERATION_RESUME_RUNTIME_MISMATCH")
@@ -148,7 +208,7 @@ def generate(manifest, model_config, out, interrupt_after=None, backend_factory=
                    "generated_this_attempt": generated, "reused": len(jobs) - generated,
                    "load_seconds_this_attempt": load_seconds,
                    "generation_seconds_total": sum(r["seconds"] for r in completed),
-                   "model_effect_validated": False, "evaluation_mode": "base_only"}
+                   "model_effect_validated": False, "evaluation_mode": spec.get("evaluation_mode", "paired")}
         atomic_json(root / "generation-summary.json", summary)
         return summary
     finally:

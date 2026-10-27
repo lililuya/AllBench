@@ -1,0 +1,11 @@
+{
+  "transformer": "/models/flux-2-klein-base-9b.safetensors",
+  "transformer_config": "/models/klein-base-config/transformer",
+  "text_encoder": "/models/qwen3-8b/text_encoder",
+  "tokenizer": "/models/klein-tokenizer",
+  "vae": "/models/flux2-vae",
+  "scheduler_config": "/models/klein-base-config/scheduler/scheduler_config.json",
+  "is_distilled": false,
+  "device": "cuda:0",
+  "cpu_offload": true
+}

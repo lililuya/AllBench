@@ -58,3 +58,11 @@ def paired_style(base, adapted):
     a, b = matrix(base), matrix(adapted)
     require(a.shape == b.shape, "PAIRED_STYLE_SHAPE_MISMATCH")
     return float(np.square(a - b).sum(1).mean())
+
+
+def reference_style(reference, generated):
+    a, b = matrix(reference), matrix(generated)
+    require(a.shape[1] == b.shape[1], "FEATURE_DIMENSION_MISMATCH")
+    # Mean squared distance over every cross pair, without a pairwise tensor.
+    value = np.square(a).sum(1).mean() + np.square(b).sum(1).mean() - 2 * (a.mean(0) @ b.mean(0))
+    return float(max(0.0, value))

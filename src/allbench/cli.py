@@ -30,11 +30,26 @@ def main():
     p.add_argument("--clip")
     p.add_argument("--vgg")
     p.add_argument("--device", default="cpu")
-    p = sub.add_parser("generate", help="使用本地 FLUX.2-klein-9B 生成 base_only 矩阵")
+    p.add_argument("--interrupt-after", type=int, help=argparse.SUPPRESS)
+    p = sub.add_parser("generate", help="使用本地 FLUX.2-klein-9B 生成底模或 LoRA 配对矩阵")
     p.add_argument("manifest")
     p.add_argument("--model-config", required=True)
     p.add_argument("--out", required=True)
     p.add_argument("--interrupt-after", type=int, help=argparse.SUPPRESS)
+    for command, help_text in (("prepare", "冻结样本、权重摘要和统一运行配置"), ("run", "一条命令完成真实生成、编码、评测和报告")):
+        p = sub.add_parser(command, help=help_text)
+        p.add_argument("config")
+        p.add_argument("--out", required=True)
+        if command == "run":
+            p.add_argument("--interrupt-stage", choices=("generate", "encode", "evaluate"), help=argparse.SUPPRESS)
+            p.add_argument("--interrupt-after", type=int, default=2, help=argparse.SUPPRESS)
+    p = sub.add_parser("report", help="导出带图片配对的 HTML、CSV 和待审模板")
+    p.add_argument("manifest")
+    p.add_argument("--report", required=True)
+    p.add_argument("--out", required=True)
+    p = sub.add_parser("preflight", help="检查运行环境、tokenizer 和 CLIP 文本长度")
+    p.add_argument("prepared")
+    p.add_argument("--kind", choices=("generator", "encoder"), required=True)
     args = parser.parse_args()
     try:
         if args.command == "demo":
@@ -51,9 +66,19 @@ def main():
         elif args.command == "generate":
             from .generate import generate
             result = generate(args.manifest, args.model_config, args.out, args.interrupt_after)
+        elif args.command == "report":
+            from .report import export_report
+            result = export_report(args.manifest, args.report, args.out)
+        elif args.command == "preflight":
+            from .preflight import preflight
+            result = preflight(args.prepared, args.kind)
+        elif args.command in ("prepare", "run"):
+            from .pipeline import prepare, run
+            result = (prepare(args.config, args.out) if args.command == "prepare" else
+                      run(args.config, args.out, args.interrupt_stage, args.interrupt_after))
         else:
             from .encode import encode
-            result = encode(args.manifest, args.out, args.dino, args.clip, args.vgg, args.device)
+            result = encode(args.manifest, args.out, args.dino, args.clip, args.vgg, args.device, args.interrupt_after)
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
         return 0
     except (ValueError, OSError, KeyError, TypeError, RuntimeError) as exc:

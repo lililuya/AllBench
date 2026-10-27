@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "benchmark_id": "replace-with-your-benchmark-id",
+  "dataset_release": "replace-with-your-data-release",
+  "evaluation_mode": "paired",
+  "synthetic": false,
+  "input_origin": "user_reference_dataset",
+  "models": {
+    "base": {"checkpoint": "black-forest-labs/FLUX.2-klein-base-9B"},
+    "adapted": {"adapter": {"checkpoint": "/outside/repo/your-lora.safetensors", "method": "lora", "scale": 1.0}}
+  },
+  "training": {"unique_samples": null, "sample_exposures": null, "steps": null, "seed": null},
+  "generation": {
+    "engine": "diffusers.Flux2KleinPipeline", "engine_revision": "0.40.0",
+    "scheduler": "FlowMatchEulerDiscreteScheduler", "steps": 50, "cfg": 4.0,
+    "width": 512, "height": 512, "negative_prompt": "", "precision": "bfloat16",
+    "max_sequence_length": 512, "generator_device": "cpu", "is_distilled": false
+  },
+  "seeds": [7, 11],
+  "concepts": [{"id": "my-concept", "kind": "subject", "trigger": "MYTOK"}],
+  "prompts": [
+    {"id": "train-01", "concept_id": "my-concept", "kind": "train", "text": "MYTOK toy on a table", "evaluation_text": "A red wooden toy on a table"},
+    {"id": "trigger-01", "concept_id": "my-concept", "kind": "trigger", "text": "MYTOK toy", "evaluation_text": "A red wooden toy"},
+    {"id": "alter-01", "concept_id": "my-concept", "kind": "alter", "text": "MYTOK toy beside a blue cube", "evaluation_text": "A red wooden toy beside a blue cube"},
+    {"id": "style-01", "concept_id": "my-concept", "kind": "style", "text": "Watercolor painting of MYTOK toy", "evaluation_text": "Watercolor painting of a red wooden toy"},
+    {"id": "class-01", "concept_id": "my-concept", "kind": "agnostic-class", "text": "A toy on a table", "evaluation_text": "A toy on a table"},
+    {"id": "agnostic-01", "concept_id": "my-concept", "kind": "agnostic", "text": "A green forest with a winding path", "evaluation_text": "A green forest with a winding path"}
+  ],
+  "images": [
+    {"id": "ref-train-01", "role": "reference", "concept_id": "my-concept", "split": "train", "group_id": "source-group-001", "path": "/outside/repo/reference-train.png"},
+    {"id": "ref-holdout-01", "role": "reference", "concept_id": "my-concept", "split": "holdout", "group_id": "source-group-002", "path": "/outside/repo/reference-holdout.png"}
+  ]
+}

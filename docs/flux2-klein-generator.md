@@ -2,6 +2,8 @@
 
 2026-10-27，用户指定该模型作为真实生成器。此文记录独立生成与评测链路；真实 LoRA 概念/数据收益仍需对应权重、参考样本与人工金标。
 
+本页保留首轮 base_only 历史证据；后续标准 LoRA、三个真实编码器和统一入口的实际验收见[完整链路记录](full-pipeline-validation.md)。
+
 ## 固定模型和组件
 
 - 官方 `black-forest-labs/FLUX.2-klein-9B` 蒸馏版；HF 配置修订 `92196c8e11f7b6cf2b7493e037d8c5345c559216`。与非蒸馏 klein-base-9B 分开。

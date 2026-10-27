@@ -7,7 +7,7 @@ import numpy as np
 from . import __version__
 from .features import load_bundle
 from .io import atomic_json, digest, file_hash, read_json, require
-from .metrics import image_similarity, paired_style, text_alignment, vendi
+from .metrics import image_similarity, paired_style, reference_style, text_alignment, vendi
 from .protocol import KINDS, validate
 
 
@@ -41,6 +41,7 @@ def compute(spec, bundle, arrays):
         def vectors(items, key):
             return np.stack([images[s["id"]][key] for s in items])
         row["fidelity"] = {}
+        row["style_fidelity"] = {}
         for split in ("train", "holdout"):
             refs = references[(concept, split)]
             if not refs:
@@ -51,6 +52,14 @@ def compute(spec, bundle, arrays):
                 value = ok(image_similarity(vectors(refs, "dino"), vectors(samples, "dino")),
                            len(samples), reference_n=len(refs))
             row["fidelity"][split] = value
+            if not refs:
+                style = missing("NO_" + split.upper() + "_REFERENCE")
+            elif "style" not in bundle["encoders"]:
+                style = missing("VGG19_NOT_CONFIGURED")
+            else:
+                style = ok(reference_style(vectors(refs, "style"), vectors(samples, "style")),
+                           len(samples), reference_n=len(refs))
+            row["style_fidelity"][split] = style
         if "clip" in bundle["encoders"]:
             text = np.stack([arrays["texts"][s["prompt_id"]]["clip"] for s in samples])
             row["text_alignment"] = ok(text_alignment(text, vectors(samples, "clip")), len(samples))
@@ -79,7 +88,7 @@ def compute(spec, bundle, arrays):
         rows.append(row)
     coverage = {c["id"]: {k: sum(p["concept_id"] == c["id"] and p["kind"] == k for p in spec["prompts"])
                            for k in sorted(KINDS)} for c in spec["concepts"]}
-    return {"schema_version": "1.0", "benchmark_id": spec["benchmark_id"],
+    return {"schema_version": "1.0", "protocol_digest": digest(spec), "benchmark_id": spec["benchmark_id"],
             "evaluation_mode": spec.get("evaluation_mode", "paired"),
             "input_origin": spec.get("input_origin", "unspecified"),
             "generator_provenance": spec.get("generator_provenance"),
@@ -92,7 +101,7 @@ def compute(spec, bundle, arrays):
             "aggregation": "每概念/提示类型/模型分别报告；Vendi逐提示后宏平均；不计算总分。",
             "directions": {"cosine": "higher", "squared_centroid_distance": "lower",
                            "text_alignment": "higher", "diversity": "higher_is_more_diverse",
-                           "base_style_drift": "lower_is_less_drift"}, "groups": rows}
+                           "base_style_drift": "lower_is_less_drift", "style_fidelity": "lower"}, "groups": rows}
 
 
 def evaluate(manifest, features, out, interrupt_after_checkpoint=False):

@@ -17,10 +17,10 @@
 | 能力 | 实施情况 | 尚需验证 |
 |---|---|---|
 | 图像相似度与 SCD | 独立数值实现；DINOv2 可选本地权重 | 目标领域与人工身份判断的相关性 |
-| CLIP 文图相似度 | 数值核心及可选 HF CLIP 编码路径；显式语义替换 | DataComp 权重/预处理对齐及 GPU 验收 |
+| CLIP 文图相似度 | HF CLIP 编码与显式语义替换，接入 DataComp ViT-L/14 固定权重 | 不声称与原作者软件/预处理的数字逐值等价；GPU 证据见完整链路记录 |
 | Vendi | 同 prompt 多 seed，附样本数 | 原作者 train/trigger 使用池化，本版统一逐提示，是工程选择 |
-| VGG19 style loss | 同提示同 seed 配对；五层卷积前激活 Gram | 预训练 VGG19 GPU 路径与人工风格校准 |
-| 风格 LoRA 的参考风格相似度 | 当前只提供概念标记与通用保真代理 | 对训练/留出参考的 VGG style fidelity 尚未实现，不能以 DINO 替代 |
+| VGG19 style loss | 同提示同 seed 配对；五层卷积前激活 Gram | 真实编码器证据单列；人工风格校准待正式样本 |
+| 风格 LoRA 的参考风格相似度 | train/holdout 分别计算 VGG 跨集合 Gram 平均平方距离 | 与人工风格判断相关性待校准，不能以 DINO 替代 |
 | Concept leak / 泛化 | agnostic、alter、style 分层与 base 对照 | 自动泄漏判定、关系/属性金标和人工阈值 |
 | FD/FID、IQA、SHAP、跨类归一化 | 本版未移植 | 独立研究任务；不作为小样本核心门槛 |
 
@@ -38,4 +38,8 @@ AllBench 依据公开数学定义整理独立接口，未整体复制作者仓�
 
 官方配置及 LFS 元数据固定 HF revision `92196c8e11f7b6cf2b7493e037d8c5345c559216`。本地 transformer 单文件 raw SHA-256 与官方值一致：`0975d6b77b5f510b99547d6724a208e36527df654e8f6134f59ece3f9f30da58`；AllBench 文件身份摘要为 `afb9ed82ce8848d6b2e7d2634fcf9a493f49bacdf5be1f0082c06accb7047e01`。官方 transformer 配置为8个双流层、24个单流层、32头、head_dim128、joint_attention_dim12288，`guidance_embeds=false`。
 
-本次优先使用 node94 已有支持 Klein 的只读独立环境 Diffusers0.40.0，按本地单文件及明确组件路径组装；不替换其他服务环境，不使用第三方合并模型。只提供 base_only 文生图，用户 LoRA 与概念参考仍待就绪；真实执行结果单独记录，不以模型卡的速度或质量声明代替本机实测。
+本次优先使用 node94 已有支持 Klein 的只读独立环境 Diffusers0.40.0，按本地单文件及明确组件路径组装；不替换其他服务环境，不使用第三方合并模型。首轮 base_only 证据见生成器记录；后续已实现 paired 标准 LoRA，真实执行结果分别记录，不以模型卡的速度或质量声明代替本机实测。
+
+CLIP 来源为 [LAION DataComp ViT-L/14](https://huggingface.co/laion/CLIP-ViT-L-14-DataComp.XL-s13B-b90K)，固定修订 `84c9828e63dc9a9351d1fe637c346d4c1c4db341`，使用其 HF CLIPModel 与本地 processor；VGG19 使用 [torchvision 官方权重](https://docs.pytorch.org/vision/main/models/generated/torchvision.models.vgg19.html) `vgg19-dcbb9e9d.pth`。实际预处理和内容摘要随特征记录，不假称与作者旧软件完全等价。
+
+[BFL 官方模型注册代码](https://github.com/black-forest-labs/flux2/blob/main/src/flux2/util.py)对 klein-9B 和 klein-base-9B 使用同一 `Klein9BParams`，但默认采样分别为4步/CFG1和50步/CFG4，且蒸馏标志不同。本轮读取已有 base 权重，核对其201个张量的名称/形状与既有蒸馏结构完全一致，复用该结构配置并显式 `is_distilled=false`；base 配置的在线下载因访问限制失败，未重试绕过。4步/CFG4仅作为完整模块连接的短试点，不能将其质量与官方默认采样比较。
